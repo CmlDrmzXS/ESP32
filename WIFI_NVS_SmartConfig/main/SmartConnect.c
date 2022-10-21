@@ -34,6 +34,8 @@ EventGroupHandle_t smartconnect_task_event_group; /* //  BIT 0 //  BIT 1 */
 
 // WiFi Credentials
 #define MAX_RETRY 4
+static int my_trial_number;
+static int my_force;
 
 // LOG Tags
 static const char *SMART = "Smart Connect";
@@ -116,9 +118,8 @@ static void my_event_handler(void *arg, esp_event_base_t event_base,
             ESP_ERROR_CHECK(esp_wifi_disconnect());
             vTaskDelay(pdMS_TO_TICKS(5000));
             ESP_ERROR_CHECK(esp_wifi_connect());
-            my_retry_num++;
-
             ESP_LOGW(SMART, "Retrying to connect to the AP...");
+            my_retry_num++;
         }
         else
         {
@@ -126,6 +127,15 @@ static void my_event_handler(void *arg, esp_event_base_t event_base,
             vTaskDelay(pdMS_TO_TICKS(100));
             xEventGroupSetBits(smartconnect_task_event_group, BIT0);
             ESP_LOGE(SMART, "Failed to connect to the AP !");
+
+            //if (my_force == 1)
+            //{
+            //    // PROGRAM SÜREKLİ BAŞA DÖNÜP DENEYECEK
+            //}
+            //else
+            //{
+            //    // PROGRAM DENEME TEKRARI KADAR DENEYECEK
+            //}
         }
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
@@ -342,9 +352,11 @@ static void my_program_create(void)
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 }
 
-int SmartConnect(int aes_e, char *aes_k, int force, int trial_number)
+void my_app_main(int aes_e, char *aes_k, int force, int trial_number)
 {
     my_aes_key = aes_k;
+    my_trial_number = trial_number;
+    my_force = force;
 
     my_nvs_init();
     my_event_group_init();
@@ -407,4 +419,9 @@ int SmartConnect(int aes_e, char *aes_k, int force, int trial_number)
             return 0;
         }
     }
+}
+
+int SmartConnect(int aes_e, char *aes_k, int force, int trial_number)
+{
+    my_app_main(aes_e, aes_k, force, trial_number);
 }
