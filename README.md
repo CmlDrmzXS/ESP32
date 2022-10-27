@@ -1,4 +1,4 @@
 # ESP32
-Examples of ESP-IDF programming.
+This repo has ESP32 ESP-IDF programming examples.
 
 
