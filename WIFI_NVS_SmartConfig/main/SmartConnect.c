@@ -1,57 +1,38 @@
 /*
 File Name: SmartConnect.c
 File Description: This file is the source file of Smart Connect library.
-Date:      13.10.2022
+Date:      27.10.2022
 Author:    Cemal Durmaz
 */
 
-// Libraries to import
-#include <string.h>
-#include <stdlib.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/event_groups.h"
-#include "esp_event_loop.h"
-#include "esp_wifi.h"
-#include "esp_wpa2.h"
-#include "esp_event.h"
-#include "esp_log.h"
-#include "esp_system.h"
-#include "nvs_flash.h"
-#include "nvs.h"
-#include "esp_netif.h"
-#include "esp_smartconfig.h"
 #include "SmartConnect.h"
 
 // FreeRTOS Event Group
 EventGroupHandle_t smartconnect_wifi_event_group; /* //  BIT 0  //    BIT 1   //     BIT 2      */
                                                   /* // CONNECT // DISCONNECT // ESPTOUCH DONE */
-EventGroupHandle_t smartconnect_task_event_group; /* //  BIT 0 //  BIT 1 */
-                                                  /* //  FAIL  //  FUNC  */
+EventGroupHandle_t smartconnect_task_event_group; /* //  BIT 0 //  BIT 1  //       BIT 2  */
+                                                  /* //  FAIL  //  FUNC   //   TASK FINISH */
 
 // Max AP Scan Number
 #define MAXIMUM_AP 30
 
 // WiFi Credentials
 #define MAX_RETRY 4
-static int my_trial_number;
-static int my_force;
 
 // LOG Tags
 static const char *SMART = "Smart Connect";
 
 // Variables
-static int my_retry_num = 0;
 static uint8_t myssid[32] = {0};
 static uint8_t mypassword[64] = {0};
+static int my_retry_num = 0;
 static char *nvs_found_ssid;
 static char *nvs_found_pass;
-static char *my_aes_key;
 static wifi_ap_record_t wifi_records[MAXIMUM_AP];
 static uint16_t ap_count = 0;
-static uint8_t my_flag = 0;
-static bool str_comp_flag = 0;
-static bool smart = 0;
+static uint8_t my_flag = 0, mytaskcontroller = 0;
+static bool str_comp_flag = 0, smart = 0;
+static TaskHandle_t my_task_handle;
 
 // Prototypes
 static void my_event_handler(void *arg, esp_event_base_t event_base,
@@ -59,6 +40,7 @@ static void my_event_handler(void *arg, esp_event_base_t event_base,
 static void nvs_write_value(nvs_handle_t handle, const char *key, char *cert);
 static void my_smartconfig_start(int aes_enab, char *aes_key);
 static char *nvs_load_value_if_exist(nvs_handle_t handle, const char *key);
+static void my_app_main(void *);
 
 // Functions
 static void my_event_group_init(void)
@@ -98,6 +80,7 @@ static void my_wifi_start(void)
 static void my_event_handler(void *arg, esp_event_base_t event_base,
                              int32_t event_id, void *event_data)
 {
+
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
     {
         ESP_ERROR_CHECK(esp_wifi_connect());
@@ -127,15 +110,15 @@ static void my_event_handler(void *arg, esp_event_base_t event_base,
             vTaskDelay(pdMS_TO_TICKS(100));
             xEventGroupSetBits(smartconnect_task_event_group, BIT0);
             ESP_LOGE(SMART, "Failed to connect to the AP !");
-
-            //if (my_force == 1)
-            //{
-            //    // PROGRAM SÜREKLİ BAŞA DÖNÜP DENEYECEK
-            //}
-            //else
-            //{
-            //    // PROGRAM DENEME TEKRARI KADAR DENEYECEK
-            //}
+            nvs_handle_t my_handle;
+            ESP_ERROR_CHECK(nvs_open("check", NVS_READWRITE, &my_handle));
+            ESP_ERROR_CHECK(nvs_erase_key(my_handle,    "ssid"));
+            ESP_ERROR_CHECK(nvs_erase_key(my_handle,    "password"));
+            ESP_ERROR_CHECK(nvs_commit(my_handle));
+            nvs_close(my_handle);
+            ESP_LOGW(SMART, "ESP is restarting now !");
+            vTaskDelay(1000);
+            esp_restart();
         }
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
@@ -222,10 +205,10 @@ static void my_wifi_scan(void)
 
     ESP_LOGI(SMART, "WiFi scan is completed ! Number of APs found nearby: %d", ap_count);
 
-    for (int i = 0; i < ap_count; i++)
-    {
-        ESP_LOGI(SMART, "SSID: %s", (char *)wifi_records[i].ssid);
-    }
+    // for (int i = 0; i < ap_count; i++)
+    //{
+    //     ESP_LOGI(SMART, "SSID: %s", (char *)wifi_records[i].ssid);
+    // }
 }
 
 static void nvs_write_value(nvs_handle_t handle, const char *key, char *cert)
@@ -322,41 +305,9 @@ static void my_network_changer(void)
     ESP_ERROR_CHECK(esp_wifi_start());
 }
 
-static void my_program_delete(void)
+static void my_app_main(void *data)
 {
-    ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &my_event_handler));
-    ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &my_event_handler));
-    ESP_ERROR_CHECK(esp_event_handler_unregister(SC_EVENT, ESP_EVENT_ANY_ID, &my_event_handler));
-    ESP_ERROR_CHECK(esp_event_loop_delete_default());
-
-    vEventGroupDelete(smartconnect_task_event_group);
-    vEventGroupDelete(smartconnect_wifi_event_group);
-
-    ESP_ERROR_CHECK(esp_wifi_disconnect());
-    ESP_ERROR_CHECK(esp_wifi_stop());
-    wifi_init_config_t cfg = {0};
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-}
-
-static void my_program_create(void)
-{
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &my_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &my_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(SC_EVENT, ESP_EVENT_ANY_ID, &my_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-
-    smartconnect_task_event_group = xEventGroupCreate();
-    smartconnect_wifi_event_group = xEventGroupCreate();
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-}
-
-void my_app_main(int aes_e, char *aes_k, int force, int trial_number)
-{
-    my_aes_key = aes_k;
-    my_trial_number = trial_number;
-    my_force = force;
+    smart_config_t smart_config = *(smart_config_t *)data;
 
     my_nvs_init();
     my_event_group_init();
@@ -370,10 +321,10 @@ void my_app_main(int aes_e, char *aes_k, int force, int trial_number)
     nvs_found_pass = nvs_load_value_if_exist(my_handle, "password");
     nvs_close(my_handle);
 
-    if (nvs_found_ssid == NULL)
+    if ((nvs_found_ssid == NULL))
     {
         ESP_LOGE(SMART, "Read Value: NULL");
-        my_smartconfig_start(aes_e, aes_k);
+        my_smartconfig_start(smart_config.aes_enab, smart_config.aes_key);
     }
     else
     {
@@ -399,7 +350,7 @@ void my_app_main(int aes_e, char *aes_k, int force, int trial_number)
         }
         else
         {
-            my_smartconfig_start(aes_e, aes_k);
+            my_smartconfig_start(smart_config.aes_enab, smart_config.aes_key);
         }
     }
 
@@ -410,18 +361,40 @@ void my_app_main(int aes_e, char *aes_k, int force, int trial_number)
 
         if (FunctionBits & BIT1)
         {
-            ESP_LOGI(SMART, "Smart Connect function is executed without any errors !");
-            return 1;
+            mytaskcontroller = 1;
+            break;
         }
         if (FunctionBits & BIT0)
         {
-            ESP_LOGW(SMART, "Smart Connect function is encountered errors !");
-            return 0;
+            mytaskcontroller = 2;
+            break;
         }
     }
+    vTaskDelete(my_task_handle);
 }
 
-int SmartConnect(int aes_e, char *aes_k, int force, int trial_number)
+int SmartConnect(int aes_enab, char *aes_key)
 {
-    my_app_main(aes_e, aes_k, force, trial_number);
+    smart_config_t sc_cfg;
+    sc_cfg.aes_enab = aes_enab;
+    sc_cfg.aes_key = aes_key;
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    xTaskCreate(my_app_main, "gorev_1", 4096, &sc_cfg, 10, &my_task_handle);
+
+    while (mytaskcontroller == 0)
+    {
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    if (mytaskcontroller == 1)
+    {
+        ESP_LOGI(SMART, "Smart Connect function is executed without any errors !");
+        return 1;
+    }
+    else
+    {
+        ESP_LOGW(SMART, "Smart Connect function is encountered errors ! ");
+        return 0;
+    }
 }

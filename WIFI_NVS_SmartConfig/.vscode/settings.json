@@ -24,6 +24,7 @@
         "esp_smartconfig.h": "c",
         "*.ipp": "c",
         "esp_event_base.h": "c",
-        "esp_log.h": "c"
+        "esp_log.h": "c",
+        "esp_event.h": "c"
     }
 }
